@@ -1,4 +1,4 @@
-# Prakati
+# Voice AI
 
 A production-style voice AI platform for building, orchestrating and running conversational voice agents.
 
