@@ -10,6 +10,8 @@ const {
   getEnabledChannels,
   buildSlackMessage,
   buildEmail,
+  sendSlackText,
+  notifyConversationCompleted,
 } = require("../services/notificationService");
 const { registerTool } = require("../services/toolRegistry");
 const callStateStore = require("../services/callStateStore");
@@ -119,4 +121,53 @@ test("email goes through the SMTP transport", async () => {
   await transport.sendMail(be({ ...lead, savedAt: "now" }, { NOTIFY_EMAIL_TO: "team@x.com", SMTP_FROM: "bot@x.com" }));
   assert.strictEqual(sent[0].to, "team@x.com");
   assert.ok(sent[0].subject.includes("John"));
+});
+
+
+test("chat completion sends a Slack notification without transcript contents", async () => {
+  let body = "";
+  const server = await startServer((req, res) => {
+    req.on("data", (c) => (body += c));
+    req.on("end", () => { res.writeHead(200); res.end("ok"); });
+  });
+  const env = { SLACK_WEBHOOK_URL: `http://127.0.0.1:${server.address().port}/hook` };
+  const result = await notifyConversationCompleted({ id: "conv-test", agentName: "Demo Agent", duration: 42, summary: "Demo completed" }, env);
+  server.close();
+  assert.deepStrictEqual(result.sent, ["slack"]);
+  const message = JSON.parse(body).text;
+  assert.ok(message.includes("Voice AI chat completed"));
+  assert.ok(message.includes("conv-test"));
+  assert.ok(message.includes("42 seconds"));
+});
+
+test("generic Slack message is skipped when webhook is not configured", async () => {
+  const result = await sendSlackText("test", {});
+  assert.strictEqual(result.skipped, true);
+});
+
+test("slack_message tool delivers a mid-call alert via the router", async () => {
+  let body = "";
+  const server = await startServer((req, res) => {
+    req.on("data", (c) => (body += c));
+    req.on("end", () => res.end("ok"));
+  });
+  process.env.SLACK_WEBHOOK_URL = `http://127.0.0.1:${server.address().port}/hook`;
+  registerTool({ name: "slack_message", type: "slack_message" });
+
+  const results = await processToolCalls("c3", "please alert the team about this caller");
+  server.close();
+  delete process.env.SLACK_WEBHOOK_URL;
+
+  assert.deepStrictEqual(results.map((r) => r.tool), ["slack_message"]);
+  assert.strictEqual(results[0].result.success, true);
+  assert.ok(JSON.parse(body).text.includes("mid-call alert"));
+});
+
+test("slack_message tool reports failure when Slack is not configured", async () => {
+  delete process.env.SLACK_WEBHOOK_URL;
+  registerTool({ name: "slack_message", type: "slack_message" });
+  const { executeTool } = require("../services/toolExecutor");
+  const result = await executeTool("slack_message", { text: "hello" });
+  assert.strictEqual(result.success, false);
+  assert.ok(result.error.includes("not configured"));
 });

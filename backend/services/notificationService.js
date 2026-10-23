@@ -146,6 +146,36 @@ async function sendEmail(lead, env = process.env, transport = createTransport(en
   await transport.sendMail(buildEmail(lead, env));
 }
 
+
+async function sendSlackText(text, env = process.env) {
+  if (!env.SLACK_WEBHOOK_URL) {
+    return { sent: [], failed: [], skipped: true };
+  }
+  try {
+    await axios.post(env.SLACK_WEBHOOK_URL, { text: escapeSlack(text) }, {
+      timeout: 8000,
+      headers: { "Content-Type": "application/json" },
+    });
+    return { sent: ["slack"], failed: [], skipped: false };
+  } catch (err) {
+    console.error("[notification] Slack message failed:", err.message);
+    return { sent: [], failed: [{ channel: "slack", error: err.message }], skipped: false };
+  }
+}
+
+async function notifyConversationCompleted(conversation = {}, env = process.env) {
+  const id = conversation.id || conversation.conversationId || "unknown";
+  const agentName = conversation.agent?.name || conversation.agentName || "Voice AI agent";
+  const duration = Number(conversation.duration);
+  const durationText = Number.isFinite(duration) && duration >= 0 ? `${Math.round(duration)} seconds` : "not provided";
+  const summary = conversation.summary ? `
+Summary: ${String(conversation.summary).slice(0, 700)}` : "";
+  return sendSlackText(`Voice AI chat completed
+Agent: ${agentName}
+Conversation ID: ${id}
+Duration: ${durationText}${summary}`, env);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -182,6 +212,8 @@ async function notifyLead(rawLead, env = process.env) {
 
 module.exports = {
   notifyLead,
+  sendSlackText,
+  notifyConversationCompleted,
   getEnabledChannels,
   buildSlackMessage,
   buildEmail,

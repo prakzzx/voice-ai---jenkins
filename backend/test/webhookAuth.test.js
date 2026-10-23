@@ -37,3 +37,18 @@ test("accepts the correct secret", () => {
   process.env.VAPI_WEBHOOK_SECRET = "s3cret";
   assert.strictEqual(run({ "x-vapi-secret": "s3cret" }).nextCalled, true);
 });
+
+test("tool webhook uses its own header and TOOL_WEBHOOK_SECRET", () => {
+  const saved = process.env.TOOL_WEBHOOK_SECRET;
+  process.env.VAPI_WEBHOOK_SECRET = "vapi";
+  process.env.TOOL_WEBHOOK_SECRET = "tool";
+  const call = (headers) => {
+    let status = null, nextCalled = false;
+    const res = { status(c) { status = c; return this; }, json() { return this; } };
+    webhookAuth({ headers, originalUrl: "/webhooks/tools" }, res, () => { nextCalled = true; });
+    return { status, nextCalled };
+  };
+  assert.strictEqual(call({ "x-vapi-secret": "vapi" }).status, 401);
+  assert.strictEqual(call({ "x-tool-webhook-secret": "tool" }).nextCalled, true);
+  if (saved === undefined) delete process.env.TOOL_WEBHOOK_SECRET; else process.env.TOOL_WEBHOOK_SECRET = saved;
+});

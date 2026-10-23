@@ -7,7 +7,8 @@ const {
 require("./toolRegistry");
 
 const {
- notifyLead
+ notifyLead,
+ sendSlackText
 }=
 require("./notificationService");
 
@@ -40,10 +41,7 @@ async function executeTool(
    toolName
   );
 
-  console.log(
-   "[toolExecutor] payload:",
-   payload
-  );
+  // Avoid logging transcripts, lead PII, or other tool payloads.
 
 
   if(
@@ -96,6 +94,14 @@ async function executeTool(
 
   }
 
+
+  if (tool.type === "slack_message") {
+   const text = String(payload.text || payload.message || "").trim();
+   if (!text) throw new Error("Slack notification text is required");
+   const outcome = await sendSlackText(text);
+   return { success: outcome.sent.includes("slack"), tool: toolName, data: outcome,
+    ...(outcome.sent.length === 0 && { error: outcome.skipped ? "Slack is not configured" : "Slack delivery failed" }) };
+  }
 
   if(
    tool.type==="notification"

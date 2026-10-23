@@ -6,14 +6,10 @@ const {
 const TOOL_PATTERNS={
 
  send_lead:[
-
-  "save lead",
-  "save this lead",
-  "record lead",
-  "store lead",
-  "capture lead",
-  "create lead"
-
+  "save lead", "save this lead", "record lead", "store lead", "capture lead", "create lead"
+ ],
+ slack_message:[
+  "notify slack", "send slack alert", "alert the team", "send team notification"
  ]
 
 };
@@ -96,13 +92,9 @@ async function processToolCalls(
   conversationId
   );
 
-  const payload={
-
-    transcript:text,
-
-    ...(state?.collectedData||{})
-
-  };
+  const payload = tool === "slack_message"
+    ? { text: `Voice AI mid-call alert\nConversation ID: ${conversationId}\nEvent: ${text.slice(0, 500)}` }
+    : { transcript: text, ...(state?.collectedData || {}) };
 
   const result=
   await executeTool(

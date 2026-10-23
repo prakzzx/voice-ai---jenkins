@@ -43,11 +43,11 @@ registerTool({
 });
 
 registerTool({
-  name: "lookup_customer",
-  type: "webhook",
-  method: "POST",
-  url: "https://your-api.com/customer",
+  name: "slack_message",
+  type: "slack_message",
 });
+
+
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 
@@ -134,6 +134,7 @@ app.get("/api", (req, res) => {
       agents: "/api/agents",
       conversations: "/api/conversations",
       webhooks: "/webhooks/vapi",
+      toolWebhook: "/webhooks/tools (POST { tool, payload })",
       health: "/health",
     },
   });

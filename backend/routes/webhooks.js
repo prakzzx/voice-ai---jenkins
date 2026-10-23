@@ -18,6 +18,9 @@ const conversationService  = require("../services/conversationService");
 const orchestrationService = require("../services/orchestrationService");
 const promptService        = require("../services/promptService");
 const vapiService          = require("../services/vapiService");
+const { notifyConversationCompleted } = require("../services/notificationService");
+const { executeTool } = require("../services/toolExecutor");
+const { getTool } = require("../services/toolRegistry");
 
 // Safe import of memoryService — server starts even if file doesn't exist yet.
 // Remove the try/catch once memoryService.js is deployed.
@@ -33,7 +36,8 @@ router.post("/vapi", async (req, res) => {
   console.log("[WEBHOOK]", messageType);
 
   try {
-    const event = req.body;
+    // Vapi nests the payload under `message`; fall back to the raw body for other senders.
+    const event = req.body?.message || req.body;
 
     switch (messageType) {
 
@@ -64,13 +68,15 @@ router.post("/vapi", async (req, res) => {
       case "call-ended":
       case "end-of-call-report": {
         const callId   = event.call?.id || event.callId;
-        const duration = event.call?.duration;
-        const summary  = event.summary || null;
+        const duration = event.durationSeconds ?? event.call?.duration;
+        const rawSummary = event.summary || event.analysis?.summary || null;
+        const summary  = typeof rawSummary === "string" ? rawSummary : null;
 
         if (!callId) break;
 
         const conversation = await prisma.conversation.findFirst({
           where: { vapiCallId: callId },
+          include: { agent: { select: { name: true } } },
         });
 
         if (!conversation) {
@@ -78,19 +84,40 @@ router.post("/vapi", async (req, res) => {
           break;
         }
 
-        await conversationService.endConversation(conversation.id, {
+        // Vapi may deliver both call-ended and end-of-call-report, or retry; notify only once.
+        const alreadyCompleted = conversation.status === "completed";
+
+        const completedConversation = await conversationService.endConversation(conversation.id, {
           duration,
           summary,
         });
 
-        const transcript = event.transcript || event.artifact?.transcript;
-        if (transcript && Array.isArray(transcript) && transcript.length > 0) {
-          const messages = transcript.map((t) => ({
-            role:      t.role === "bot" ? "assistant" : t.role,
-            content:   t.content || t.message || "",
-            timestamp: t.timestamp ? new Date(t.timestamp) : new Date(),
-          }));
+        const transcript = event.artifact?.messages || event.transcript || event.artifact?.transcript;
+        if (!alreadyCompleted && Array.isArray(transcript) && transcript.length > 0) {
+          const messages = transcript
+            .filter((t) => t.role !== "system")
+            .map((t) => ({
+              role:      t.role === "bot" ? "assistant" : t.role,
+              content:   t.content || t.message || "",
+              timestamp: t.timestamp ? new Date(t.timestamp) : new Date(),
+            }));
           await conversationService.addMessages(conversation.id, messages);
+        }
+
+        // Slack notification is best-effort, sent after the conversation is saved,
+        // and must never prevent the rest of webhook processing.
+        if (!alreadyCompleted) {
+          try {
+            const completionNotice = await notifyConversationCompleted({
+              ...completedConversation,
+              agentName: conversation.agent?.name,
+            });
+            if (completionNotice.failed.length) {
+              console.warn("[webhook] chat-completion Slack notification failed");
+            }
+          } catch (err) {
+            console.warn("[webhook] chat-completion Slack notification error:", err.message);
+          }
         }
 
         await orchestrationService.endOrchestration(conversation.id);
@@ -149,8 +176,30 @@ router.post("/vapi", async (req, res) => {
       }
 
       // ── Function / tool calls ─────────────────────────────────────────────
-      case "function-call": {
-        return res.json({ result: "Tool calling not yet implemented" });
+      case "function-call":
+      case "tool-calls": {
+        // Execute only tools registered by the server; never accept arbitrary URLs from webhook input.
+        // Vapi sends toolCallList: [{ id, name, arguments }] (or toolCalls: [{ id, function: {name, arguments} }]).
+        const rawCall = event.toolCallList?.[0] || event.toolCalls?.[0] || event.functionCall || {};
+        const call = rawCall.function || rawCall;
+        const toolCallId = rawCall.id;
+        const toolName = call.name;
+        let payload = call.parameters || call.arguments || {};
+        if (typeof payload === "string") {
+          try { payload = JSON.parse(payload); } catch { payload = {}; }
+        }
+        if (!toolName || !getTool(toolName)) {
+          return res.status(400).json({ error: "Unknown or missing registered tool" });
+        }
+        const result = await executeTool(toolName, payload);
+        const resultText = result.success ? "success" : "failed";
+        return res.json({
+          // Vapi expects results keyed by toolCallId; keep legacy fields for older callers.
+          results: toolCallId ? [{ toolCallId, result: resultText }] : undefined,
+          result: resultText,
+          tool: toolName,
+          data: result.success ? result.data : undefined,
+        });
       }
 
       default: {
@@ -165,6 +214,15 @@ router.post("/vapi", async (req, res) => {
     // Always return 200 — a 500 causes Vapi to retry indefinitely
     return res.status(200).json({ received: true, error: "Processing failed" });
   }
+});
+
+// Generic webhook entry point for approved registered tools. Protected by VAPI_WEBHOOK_SECRET
+// through the middleware mounted in server.js. The body can never define a destination URL.
+router.post("/tools", async (req, res) => {
+  const toolName = String(req.body?.tool || "");
+  if (!toolName || !getTool(toolName)) return res.status(400).json({ error: "Unknown registered tool" });
+  const result = await executeTool(toolName, req.body?.payload || {});
+  return res.status(result.success ? 200 : 502).json({ success: result.success, tool: toolName, ...(result.success ? { data: result.data } : { error: result.error }) });
 });
 
 // ─── Internal: push updated stage prompt to live call ────────────────────────
