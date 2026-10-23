@@ -450,3 +450,8 @@ Build a production-style voice AI platform capable of supporting sophisticated c
 The objective is not simply voice chat.
 
 The objective is orchestration.
+
+## Continuous Integration
+
+This project uses Jenkins to validate backend and frontend Docker builds.
+The local CI pipeline does not deploy or restart the application.
