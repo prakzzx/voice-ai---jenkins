@@ -1,0 +1,59 @@
+# Jenkins Configuration as Code: Jenkins starts already configured.
+# Values come from jenkins/.env (passed in by docker-compose).
+jenkins:
+  systemMessage: "Prakati CI/CD - configured as code (jenkins/casc.yaml)"
+  numExecutors: 1
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID:-admin}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - usernamePassword:
+              scope: GLOBAL
+              id: "github"
+              username: "${GITHUB_USER:-git}"
+              password: "${GITHUB_TOKEN:-unused}"
+              description: "GitHub token (only used when the repo is private)"
+
+security:
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+
+unclassified:
+  location:
+    url: "${JENKINS_URL:-http://localhost:8080/}"
+
+jobs:
+  - script: |
+      pipelineJob('prakati') {
+        description('Test, build and deploy Prakati (Jenkinsfile in the repo root)')
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url(System.getenv('REPO_URL'))
+                  if (System.getenv('GITHUB_TOKEN')) {
+                    credentials('github')
+                  }
+                }
+                branch('*/' + (System.getenv('REPO_BRANCH') ?: 'main'))
+              }
+            }
+            scriptPath('Jenkinsfile')
+          }
+        }
+        // Check the repo for new commits every ~2 minutes
+        triggers {
+          scm('H/2 * * * *')
+        }
+      }

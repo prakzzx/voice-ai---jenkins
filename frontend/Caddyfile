@@ -1,0 +1,30 @@
+# {$DOMAIN:localhost} reads the DOMAIN environment variable.
+# With a real domain, Caddy gets and renews a free Let's Encrypt certificate.
+# With "localhost", it uses a local self-signed certificate for testing.
+{$DOMAIN:localhost} {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:3001
+	}
+
+	handle /agents* {
+		reverse_proxy backend:3001
+	}
+
+	handle /webhooks/* {
+		reverse_proxy backend:3001
+	}
+
+	handle /health {
+		reverse_proxy backend:3001
+	}
+
+	# Everything else is the React app. Unknown paths fall back to
+	# index.html so React Router pages still work after a refresh.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

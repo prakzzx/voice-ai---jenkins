@@ -1,0 +1,7 @@
+# Shell scripts and Docker files must keep Unix line endings, even if you edit on Windows
+*.sh text eol=lf
+Dockerfile text eol=lf
+Jenkinsfile text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

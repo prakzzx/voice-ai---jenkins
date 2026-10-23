@@ -1,0 +1,84 @@
+# Runs the whole app: PostgreSQL + API + web (React + HTTPS).
+#   docker compose -p prakati --env-file /opt/prakati/.env up -d --build
+name: prakati
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prakati-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prakati
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the env file}
+      POSTGRES_DB: prakati
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prakati -d prakati"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    image: prakati-backend:latest
+    container_name: prakati-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: postgresql://prakati:${POSTGRES_PASSWORD}@db:5432/prakati
+      FRONTEND_URL: https://${DOMAIN:?Set DOMAIN in the env file}
+      VAPI_API_KEY: ${VAPI_API_KEY:-}
+      VAPI_WEBHOOK_SECRET: ${VAPI_WEBHOOK_SECRET:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-}
+      LEAD_WEBHOOK_URL: ${LEAD_WEBHOOK_URL:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      NOTIFY_EMAIL_TO: ${NOTIFY_EMAIL_TO:-}
+      NOTIFY_CHANNELS: ${NOTIFY_CHANNELS:-}
+    networks: [internal]
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: https://${DOMAIN:?Set DOMAIN in the env file}
+        VITE_VAPI_PUBLIC_KEY: ${VITE_VAPI_PUBLIC_KEY:-}
+    image: prakati-web:latest
+    container_name: prakati-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

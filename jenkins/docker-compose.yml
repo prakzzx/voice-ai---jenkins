@@ -1,0 +1,33 @@
+# Jenkins server. Start it with:
+#   docker compose -f jenkins/docker-compose.yml --env-file jenkins/.env up -d --build
+name: prakati-jenkins
+
+services:
+  jenkins:
+    build: .
+    container_name: prakati-jenkins
+    restart: unless-stopped
+    # Bound to localhost only: reach it through an SSH tunnel (see DEPLOYMENT.md).
+    ports:
+      - "127.0.0.1:8080:8080"
+    # Lets the jenkins user use the host's Docker socket
+    group_add:
+      - "${DOCKER_GID:-999}"
+    environment:
+      JAVA_OPTS: "-Xmx512m -Djenkins.install.runSetupWizard=false"
+      CASC_JENKINS_CONFIG: /usr/share/jenkins/casc.yaml
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:?Set JENKINS_ADMIN_PASSWORD in jenkins/.env}
+      JENKINS_URL: ${JENKINS_URL:-http://localhost:8080/}
+      REPO_URL: ${REPO_URL:?Set REPO_URL in jenkins/.env}
+      REPO_BRANCH: ${REPO_BRANCH:-main}
+      GITHUB_USER: ${GITHUB_USER:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      # App secrets live on the server only; the pipeline reads them from here
+      - /opt/prakati/.env:/var/jenkins_env/prakati.env:ro
+
+volumes:
+  jenkins_home:
